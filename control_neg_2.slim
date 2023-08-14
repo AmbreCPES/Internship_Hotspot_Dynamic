@@ -1,0 +1,193 @@
+/// #### _(with Jump Menu annotations)_ 
+
+// No MS file used, we assume that MS because the mutation are at random causes the GC to be higher than expected with this mutation matrix
+/** **Initialisation depuis commade -d dans terminal ou par défaut dans le script** */
+initialize()
+{
+	defineConstant("seed", rdunif(1, 0, asInteger(2^62) - 1)); // initialization of seed
+	setSeed(seed);
+	//catn(paste0("Seed:", getSeed()));
+	defineConstant("L",25000);
+	defineConstant("L_HS",2000);
+	defineConstant("r0", 0);
+	defineConstant("r",25*r0);
+	defineConstant("Ne",25000);
+	
+	//defineConstant("loci",100);
+	defineConstant("n",20);
+	
+	defineConstant("Start",7000);
+	defineConstant("Duree_HS",7000);
+	defineConstant("Duree_tot",14000);
+	
+	//defineConstant("n",20);
+	
+	//Creation of a directory containing the ancestral sequence
+	initializeSLiMOptions(nucleotideBased=T); //Nucleotides based model 
+	defineGlobal("seq",randomNucleotides(L, basis=c(0.3, 0.2, 0.2, 0.3)));
+	
+	defineConstant("folder","/home/jaeger/sshfs-path_4/Simulation_3");
+	createDirectory(paste0(folder,"/2_Data_Slim/Out_Slim/controle_neg_2"));
+	createDirectory(paste0(folder,"/2_Data_Slim/Out_Slim/controle_neg_2/loci_",asString(loci)));
+	name_file=paste0(folder,"/2_Data_Slim/Out_Slim/controle_neg_2/loci_",asString(loci), "/ancSeq_", asString(loci));
+	if (fileExists(name_file) == F)
+	{
+		writeFile(name_file,paste0(">genome 0", "\n", asString(seq)) , append = F, compress = F);
+	}
+	else
+	{
+		print(paste0("A file named: ancSeq_", asString(loci), " already exixts. Data were not replaced"));
+	}
+	
+	initializeAncestralNucleotides(seq); 
+	initializeMutationTypeNuc("m1", 0.5, "f", 0.0);
+	
+	mm = matrix(c(0, 0.25e-8, 0.5e-8, 0.25e-8, 0.25e-8, 0, 0.25e-8, 1e-8, 1e-8, 0.25e-8, 0, 0.25e-8, 0.25e-8, 0.5e-8, 0.25e-8, 0), nrow=4, ncol=4, byrow=T );
+	initializeGenomicElementType("g1", m1, 1.0, mutationMatrix=mm); 
+	initializeGenomicElement(g1, 0, L - 1);
+	initializeRecombinationRate(r0); // Initialization of the recombination rate
+	initializeGeneConversion(0.9, 100, 0, 0.44); 
+	
+}
+
+1 early() // create Subpop
+{
+	setSeed(seed);
+	sim.addSubpop("p1", Ne, 0.5);
+
+	community.rescheduleScriptBlock(s2, start = (Start), end = (Start));
+	community.rescheduleScriptBlock(s3, start = (Start + Duree_HS), end = (Start + Duree_HS));
+	community.rescheduleScriptBlock(s4, start = (Duree_tot), end = (Duree_tot));
+	defineConstant("het_0",calcHeterozygosity(p1.genomes));
+print(nucleotideFrequencies(seq));
+
+}
+
+
+/** **Apparition Hotspot:** */
+s2 7000 early() //Apparition Hotspot 
+{
+	sim.chromosome.setRecombinationRate(c(r0, r, r0), c(integerDiv(L,2)-integerDiv(L_HS,2)-1, integerDiv(L,2)+integerDiv(L_HS,2)-1, L-1));
+}
+
+s3 14000 early() //Disparition Hotspot 
+{
+	sim.chromosome.setRecombinationRate(r0);
+}
+
+
+/** **Final output:** */
+s4 14 late()
+{
+	
+	
+	//Creatuion of a subpopulation of n individuals from p1 
+	sim.addSubpopSplit("p2", n, p1);
+	
+	// creation of genomes sequences of n individuals (2*n sequences) in the fasta format
+	i=0;
+	sequences=p2.genomes.nucleotides();
+	genome="";
+	while (i<((2*n)-1))
+	{
+		genome=paste0(genome,">genome", asString(i+1), "\n", sequences[i],"\n");
+		i= i+1;
+	}
+	genome=paste0(genome,">genome", asString(i+1), "\n", sequences[i]);
+	sortie= genome ;
+	
+	name_file_f=paste0(folder,"/2_Data_Slim/Out_Slim/controle_neg_2/loci_",asString(loci),"/outputFasta_", asString(loci));
+	if (fileExists(name_file_f) == F)
+	{
+		writeFile(name_file_f, asString(sortie), append = F, compress = F);
+	}
+	else
+	{
+		print(paste0("A file named: outputFasta_", asString(loci), "already exists. Data not replaced"));
+	}
+	
+	
+	
+	//Creation of VCF file for a sample of n individuals 
+	name_file_v = paste0(folder,"/2_Data_Slim/Out_Slim/controle_neg_2/loci_",asString(loci), "/outputVCF_", asString(loci));
+	
+	if (fileExists(name_file_v) == F)
+	{
+		p2.genomes.outputVCF(filePath = name_file_v);
+	}
+	else
+	{
+		print(paste0("A file named: outputVCF_", asString(loci), "already exists. Data not replaced."));
+	}
+	
+	
+	// Create file ancPriors which contains the positions of mutations and the nature of the ancestral nucleotide at this position  
+	mut_pos = p2.genomes.mutations.position;
+	log_pos_mut= mut_pos[0];
+	taille_all=length(p2.genomes.mutations.position);
+	ancPrior=NULL;
+	if (taille_all >= 1) {
+	for (pos in 0:(taille_all-1))
+	{
+		
+		if (match(mut_pos[pos], log_pos_mut) == -1) //(integer) match(* x, * table) Returns a vector of the positions of (first) matches of x in table. 
+		{
+			log_pos_mut = c(log_pos_mut, mut_pos[pos]);
+		} 
+		
+	}
+	log_pos_mut = sort(log_pos_mut);
+	taille = length(log_pos_mut);
+	
+	for (posi in 0:(taille-1))
+	{
+		line = "";
+		if (strfind(seq, "A", pos = log_pos_mut[posi]) == (log_pos_mut[posi]) ) //Returns the first occurrence of a string specified by s in each of the elements of x, starting at position pos. 
+			// if no match was found in a given element, the corresponding value in the returned vector is -1
+		{
+			line = " 0.99 0.0033 0.0034 0.0033";
+		}
+		if (strfind(seq, "C", pos = log_pos_mut[posi]) == (log_pos_mut[posi]))
+		{
+			line = " 0.0033 0.99 0.0034 0.0033";
+		}
+		if (strfind(seq, "G", pos = log_pos_mut[posi]) == (log_pos_mut[posi]))
+		{
+			line = " 0.0033 0.0034 0.99 0.0033";
+		}
+		if (strfind(seq, "T", pos = log_pos_mut[posi]) == (log_pos_mut[posi]))
+		{
+			line = " 0.0033 0.0034 0.0033 0.99";
+		}
+		if (isNULL(ancPrior)==F)
+		{
+			ancPrior = paste(ancPrior, asString(log_pos_mut[posi]) + line, sep = "\n");
+		}
+		else
+		{
+			ancPrior = asString(log_pos_mut[posi]) + line; 
+		}
+	}
+	}
+	name_file_p = paste0(folder,"/2_Data_Slim/Out_Slim/controle_neg_2/loci_",asString(loci), "/ancPriors_", asString(loci));
+	
+	if (fileExists(name_file_p) == F)
+	{
+		writeFile(name_file_p, ancPrior, append = F, compress = F);// Careful, this file can be empty
+	}
+	else
+	{
+		print(paste0("A file named: ancPriors_", asString(loci), "already exixts. Data not replaced."));
+	}
+	
+	name_file_het=paste0(folder,"/2_Data_Slim/Out_Slim/controle_neg_2/loci_",asString(loci),"/heterozygosity_",asString(loci));
+	defineConstant("het_f",calcHeterozygosity(p1.genomes));
+	print(het_f);
+	
+	if (fileExists(name_file_het) == F) {
+	
+	writeFile(name_file_het, paste("#Heterozygosity: \n","het_0 ",het_0,"\n", "het_f ",het_f,sep="" ));
+	}
+
+}
+
