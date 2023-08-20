@@ -1,0 +1,876 @@
+---
+title: "Data Analysis: Measure of gBGC and LD"
+output: html_notebook
+---
+
+
+# First Simulation: Evolution over 400k years of a constant human population of 5000 individuals
+
+VCF files, Fasta files, and file containing the ancestral sequence were obtained from SLiM simulations. They are not the output of the all populations but of a 20 individuals samples chose at random. 2000 loci of 25000 bp were generated for each of the 9 sets of parameters.
+Initial polymorphisms in the sequence was obtained using MS, which allows to create mutations files. Those mutations were read at the first generation of the SliM simulations so that the polymorphism rate is similar to the one of a real population.  
+**Constant parameters:**
+
+* Ne = 10000
+* mu = 2.25e-8 *(mean recombination rate)*
+* r0 = 1e-7
+* r = 25*r0
+* hotspot length = 2000 bp *(in the center of the sequence)*
+* Mutation matrix = matrix(c(0, 0.5e-8, 1.0e-8, 0.5e-8, 0.5e-8, 0, 0.5e-8, 2e-8, 2e-8, 0.5e-8, 0, 0.5e-8, 0.5e-8, 1.0e-8, 0.5e-8, 0), nrow=4, ncol=4, byrow=T )
+* initializeGeneConversion(0.9, 100, 0, 0.44)
+* basis=c(0.3, 0.2, 0.2, 0.3)) *(proportion of nucleotides A,C,G,T)*
+
+**Varying parameters:**
+```{r echo = FALSE, results ='asis'}
+library(knitr)
+kable(data.frame("Start generation"=c(7000,10500,12250,13125,13562,7000,7000,7000,7000),"Number of Generation"=c(7000,3500,1750,875,438,3500,5250,6125,6443),"Number of Runs"= c(1977,1971,1981,1969,1965,1978,1974,1972,1976),row.names= as.character(c(1:9))),caption="Properties of hotspots for 14000 generations simulations")
+```
+
+
+First, I calculated the GC equilibrium, an estimator of gBGC (GC-Biased Gene Conversion) from VCF-file. VCF ouput provide the position and nature of mutations (nucleotide in the ancestral sequence and nucleotide at the end of the simulation). The ancestral sequence is a nucleotide sequence which corresponds to the initial genomes of the 5000 individuals of the simulated population. From this, sequence we can obtained the initial proportion of each nucleotide.
+
+
+```{r}
+
+cut_VCF <- function(file_name,IN) 
+  
+  #from VCF file we get a 2 column data frame with for each SNP the ancestral nucleotide and the new one, each row is named with the position of the SNP (index from 0)
+  
+{
+  file <- paste(IN,file_name,sep="")
+  if (length(readLines(file))>15) {
+    tableau <- read.table(file, sep="\t", header=F)
+    D<- data.frame("anc"=tableau$V4,"new"= tableau$V5 ,row.names=tableau$V2)
+    return(D)
+  }else {
+    return(0)
+  }
+}
+
+get_GC_anc <- function(file_path,IN,L,L_HS)
+  
+  #from a sequence of nucleotides in a file in the Fasta format, we obtain the number of Strong (S) nucleotides (GC), the number of Weak (W) nucleotides (AT) in the Hotspot (HS) and the Flanking Region (FR), here the hotspot is 500bp long in the center of 2500 long sequence;
+  
+{
+  path <- paste(IN,file_path,sep="")
+  Seq <- readLines(path)[2] 
+  Seq <- strsplit(Seq[1],split="")[[1]]
+  
+  Count_N_FR <- as.data.frame(table(c(Seq[1:(as.integer(round(L/2))-as.integer(round(L_HS/2)))],Seq[(as.integer(round(L/2)) + as.integer(round(L_HS/2)) +1 ):L])))
+  Count_N_HS <- as.data.frame(table(Seq[(as.integer(round(L/2))-as.integer(round(L_HS/2))+1):(as.integer(round(L/2))+as.integer(round(L_HS/2)))]))
+  
+  Count_GC_FR <- as.integer((Count_N_FR$Freq[2]+Count_N_FR$Freq[3]))
+  Count_GC_HS <- as.integer((Count_N_HS$Freq[2]+Count_N_HS$Freq[3]))
+  
+  c("S_HS"=Count_GC_HS, "W_HS"=(L_HS - Count_GC_HS), "S_FR" = Count_GC_FR, "W_FR"=((L-200-L_HS) - Count_GC_FR))
+}
+
+get_mut <- function(file_name,IN,L,L_HS)
+  
+  #from a VCF file, we get the number of W to S mutations ans of S to W mutations in the HS and the FR. 
+  
+{
+  VCF <- cut_VCF(file_name,IN)
+  if (is.data.frame(VCF)==F) {
+    return(c("SW_count_HS"=0, "WS_count_HS"= 0, "SW_count_FR"=0, "WS_count_FR"=0 ))
+  }else {
+    lines_FR <- (as.integer(row.names(VCF)) <= (as.integer(round(L/2))-as.integer(round(L_HS/2)))-100) | (as.integer(row.names(VCF)) >= (as.integer(round(L/2))+as.integer(round(L_HS/2)))+100+1)
+    lines_HS <- (as.integer(row.names(VCF)) >= (as.integer(round(L/2))-as.integer(round(L_HS/2)))+1) & (as.integer(row.names(VCF)) <= (as.integer(round(L/2))+as.integer(round(L_HS/2))))
+    FR <- VCF[lines_FR,]
+    HS <- VCF[lines_HS,]
+    
+    SW_count_HS <- sum((HS$anc == "G" | HS$anc =="C") & (HS$new == "A" | HS$new =="T") == TRUE )
+    WS_count_HS <- sum((HS$new == "G" | HS$new =="C") & (HS$anc == "A" | HS$anc =="T") == TRUE )
+    
+    SW_count_FR <- sum((FR$anc == "G" | FR$anc =="C") & (FR$new == "A" | FR$new =="T") == TRUE )
+    WS_count_FR <- sum((FR$new == "G" | FR$new =="C") & (FR$anc == "A" | FR$anc =="T") == TRUE )
+    
+    return(c("SW_count_HS"=SW_count_HS, "WS_count_HS"= WS_count_HS, "SW_count_FR"=SW_count_FR, "WS_count_FR"=WS_count_FR ))
+  }
+}
+```
+
+```{r}
+#Faire tourner sur les locis et les params avec des boucles for
+Slim_error <- c() #an indicator about files Out Slim files which were not properly created 
+
+for (param in 3:3){
+
+  L <- 10000
+  L_HS <- 2000
+  
+  for (loci in 1423:2000){
+    IN <- "/home/jaeger/sshfs-path_4/Simulation_4/2_Data_Slim/Out_Slim"
+    
+    
+    folder <- "/home/jaeger/sshfs-path_4/Simulation_4"
+    
+    file_VCF <- paste("/Param_",param,"/loci_",loci,"/outputVCF_",loci,sep="")
+    file_Seq <- paste("/Param_",param,"/loci_",loci,"/ancSeq_",loci,sep="")
+    file_priors <- paste("/Param_",param,"/loci_",loci,"/ancPriors_",loci,sep="")
+    
+    if (file.exists(paste(IN,file_priors,sep=""))){
+        #Some run dysfunctioned and files were not properly created
+      mutations <- get_mut(file_VCF,IN,L,L_HS)
+      count <- get_GC_anc(file_Seq,IN,L,L_HS)
+      
+      S <- count["S_HS"]
+      W <- count["W_HS"]
+      
+      SW <- mutations["SW_count_HS"]
+      WS <- mutations["WS_count_HS"]
+      
+      if (dir.exists(paste(folder,"/4_gBGC/Param_",param, sep=""))==FALSE){
+        dir.create(paste(folder,"/4_gBGC/Param_",param, sep=""))
+      }
+        
+      if (file.exists(paste(folder,"/4_gBGC/Param_",param,"/HS.txt", sep=""))) {
+        cat(paste(loci, W, S, WS, SW, "\n",sep=" "), file = paste(folder,"/4_gBGC/Param_",param,"/intermed_HS.txt", sep=""))
+        file.append(paste(folder,"/4_gBGC/Param_",param,"/HS.txt", sep=""), paste(folder,"/4_gBGC/Param_",param,"/intermed_HS.txt", sep=""))
+      }else{
+        cat(paste("#loci ","#W ","#S ","#WS ","#SW\n",as.integer(loci)," ",W," ", S, " ", WS, " ",SW,"\n", sep=""), file=paste(folder,"/4_gBGC/Param_",param,"/HS.txt", sep=""))
+      }
+      
+      S <- count["S_FR"]
+      W <- count["W_FR"]
+      
+      SW <- mutations["SW_count_FR"]
+      WS <- mutations["WS_count_FR"]
+      
+      if (file.exists(paste(folder,"/4_gBGC/Param_",param,"/FR.txt", sep=""))) {
+        cat(paste(loci, W, S, WS, SW,"\n",sep=" "), file = paste(folder,"/4_gBGC/Param_",param,"/intermed_FR.txt", sep=""))
+        file.append(paste(folder,"/4_gBGC/Param_",param,"/FR.txt", sep=""), paste(folder,"/4_gBGC/Param_",param,"/intermed_FR.txt", sep=""))
+    }else{
+      cat(paste("#loci ","#W ","#S ","#WS ","#SW\n",as.integer(loci)," ",W," ", S, " ", WS, " ",SW,"\n", sep=""), file=paste(folder,"/4_gBGC/Param_",param,"/FR.txt", sep=""))
+    }
+    }else
+      {Slim_error <- c(Slim_error,paste("Param_",param,"loci_",loci))}
+  }
+}
+```
+### GC* measure
+
+gBGC (GC-Biased Gene Conversion) is often measured by B = 4Neb, with Ne the size of the effective population, b the genome average transmission bias.
+
+With the preceding code we obtain files, 2 tables for each set of parameters. One with the SW WS S and W count for hotspots and one for flanking regions. 
+
+**Figure we could trace to see that there is more WS than SW due to GC biased is the ratio of SW and WS (number of SW over the number of SW+WS) in hotspots compared with flanking regions**
+
+*Rq: The genome average transmission bias, b, is therefore expected to be proportional to the recombination rate,gene conversion tract length, and repair bias (Galtier 2021).
+Fitting various population genetic models to polarised GC vs. AT site frequency spectra, Glémin et al. (2015) estimated the genome average B to be in the weak selection range, around 0.4, with B reaching a value above 5 in 1%-2% of the genome.*
+
+```{r}
+get_v <- function(table) 
+  
+#Number of mutations S to W divided by the number of S bases, SW/S. We calculate this indicator for every loci of each set of parameters.
+  
+{
+  v <- sum(table[,5])/sum(table[,3])
+
+  return(v)
+}
+
+get_u <- function(table) 
+  
+#Number of mutations W to S divided by the number of S bases, WS/W. We calculate this indicator for every loci of each set of parameters.
+  
+{
+  u <- sum(table[,4])/sum(table[,2])
+
+  return(u)
+}
+
+get_GC <- function(table) 
+#u/(u+v)
+{
+  u <- get_u(table)
+  v <- get_v(table)
+  
+  GC <- u/(u+v)
+  
+  if (is.nan(GC)) {GC <- 0} 
+  
+#If NaN because division by 0 because no SW or WS. It's possible if weak mutation rate. It corresponds to weak Gene Conversion so set to 0.
+  
+  return(GC)
+}
+
+```
+
+
+```{r}
+#Faire tourner sur les locis et les params avec des boucles for
+for (param in 1:9) {
+  
+folder <- "/home/jaeger/sshfs-path_4/Simulation_4"
+file_FR <- paste(folder,"/4_gBGC/Param_",param,"/FR.txt",sep="")
+file_HS <- paste(folder,"/4_gBGC/Param_",param,"/HS.txt",sep="")
+
+GC_HS <- get_GC(read.table(file_HS))
+GC_FR <- get_GC(read.table(file_FR))
+
+if (file.exists(paste(folder,"/4_gBGC/GC", sep=""))) {
+  cat(paste(param, GC_HS, GC_FR,"\n",sep=" "), file = paste(folder,"/4_gBGC/GC_",param, sep=""))
+  file.append(paste(folder,"/4_gBGC/GC", sep=""), paste(folder,"/4_gBGC/GC_",param, sep=""))
+}else{
+  cat(paste("#Param ","#GC_HS ","#GC_FR\n",as.integer(param)," ",GC_HS," ", GC_FR,"\n", sep=""), file=paste(folder,"/4_gBGC/GC", sep=""))
+}
+}
+```
+
+
+We obtain with this a table containing GC* for hotspots and flanking regions on each set of parameters. With the tables we obtained before, FR.txt and HS.txt, we can perform bootstrapping.<br>
+**How does bootstrapping works?**
+
+From the file we pull a random sample of the same length of the tables with replacement. On this new table, we can compute the GC*. We repeat this process 1000 times, and then represent the data in forms of boxplots, 1 for the HS, one for FR for each set of flanking regions. We trace 2 graphs one for the parameters where the Start of the hot spot vary and one for the parameters where the Start generation is fixed the duration vary.
+
+It is a useful statistical tool as we can not compute the confidence interval in a simple way. We can observe in a straight forward way if the difference in GC* between HS and FR appears significant for the different parameters. 
+```{r}
+bootstrap <- function(file_HS,file_FR,N) {
+  table_HS <- read.table(file_HS, row.names=NULL)
+  table_FR <- read.table(file_FR, row.names=NULL)
+  L <- nrow(table_HS)
+  if (L!=nrow(table_FR)) {
+    return(print("ERREUR: TABLES HS AND FR OF DIFFERENT LENGTH"))
+  }
+  GC_HS <- NULL
+  GC_FR <- NULL
+  for (i in 1:N) {
+  SAMPLE <- sample(1:L,L,replace=TRUE)
+  B_HS <- data.frame(table_HS[SAMPLE,],row.names=NULL)
+  B_FR <- data.frame(table_FR[SAMPLE,],row.names=NULL)
+  
+  GC_HS <- c(GC_HS, get_GC(B_HS))
+  GC_FR <- c(GC_FR, get_GC(B_FR))
+  }
+  return(c("GC_HS"=GC_HS, "GC_FR"=GC_FR))
+}
+```
+
+```{r}
+for (param in 1:9) {
+  
+
+  N <- 1000
+  file_HS <- paste("/home/jaeger/sshfs-path_4/Simulation_4/4_gBGC/Param_",param,"/HS.txt",sep="")
+  file_FR <- paste("/home/jaeger/sshfs-path_4/Simulation_4/4_gBGC/Param_",param,"/FR.txt",sep="")
+  folder <- paste("/home/jaeger/sshfs-path_4/Simulation_4/4_gBGC/Param_",param,sep="")
+  
+  GC <- bootstrap(file_HS,file_FR,N)
+  GC_HS <- GC[1:N]
+  GC_FR <- GC[(N+1):(2*N)]
+  
+  cat(paste(GC_HS,"\n",sep=""), file = paste(folder,"/GC_bootstrap_HS.txt", sep=""))
+  cat(paste(GC_FR,"\n",sep=""), file = paste(folder,"/GC_bootstrap_FR.txt", sep=""))
+}
+```
+
+```{r}
+if (!require(ggplot2)) {
+  install.packages("ggplot2")
+  library(ggplot2)
+}
+
+get_single_bootstrap_gBGC <- function(folder,file_GC,param,dur,N) 
+  
+  # bootstrap for one set of parameter
+{
+  
+  FR <- list()
+  HS <- list()
+  
+  file_FR <- paste(folder,"/4_gBGC/Param_",param,"/GC_bootstrap_FR.txt",sep="")
+  file_HS <- paste(folder,"/4_gBGC/Param_",param,"/GC_bootstrap_HS.txt",sep="")
+    
+  FR[[param]] <- as.numeric(readLines(file_FR))
+  HS[[param]] <- as.numeric(readLines(file_HS))
+  
+  data_1 <- data.frame(Categorie = c(rep(dur, times = (2*N))),
+                       Valeur = c(HS[[param]],FR[[param]]),
+                       ListName = rep(c("Hotspot", "Flanking Region"), each = N))
+  
+
+  points_GC <- read.table(file_GC)
+  
+  data_2 <- data.frame(Categorie = rep(c(dur),times=2),
+                       Valeur = c(points_GC[,3], points_GC[,2]))
+  
+  ggplot(mapping = aes(x = factor(Categorie))) +
+    geom_boxplot(data=data_1, mapping = aes(x = factor(Categorie), y=Valeur, fill = ListName)) + 
+    geom_point(data=data_2,colour=c("#8B0000", "#00008B"), size= 2, aes(y=Valeur),position=position_dodge2(width = 0.8 , preserve = "total")) + 
+    xlab("Hotspot duration (in thousands of years)") +
+    ylab("GC*") +
+    ggtitle("Bootstrap of GC* for Hotspots of varying duration")
+}
+```
+
+
+```{r}
+get_bootstrap_gBGC_1 <- function(folder) 
+  
+# bootstrap for the sets of parameters 1 to 5
+  
+  {
+  
+  
+  FR <- list()
+  HS <- list()
+  
+  for (param in 1:5) {
+    file_FR <- paste(folder,"/4_gBGC/Param_",param,"/GC_bootstrap_FR.txt",sep="")
+    file_HS <- paste(folder,"/4_gBGC/Param_",param,"/GC_bootstrap_HS.txt",sep="")
+    
+    FR[[param]] <- as.numeric(readLines(file_FR))
+    HS[[param]] <- as.numeric(readLines(file_HS))
+  }
+  
+  
+  data_1 <- data.frame(Categorie = c(rep("-12.5", times = 1000),rep("-25", times = 1000),rep("-50", times = 1000),rep("-100", times = 1000),rep("-200", times = 1000)),
+                       Valeur = c(HS[[5]],HS[[4]],HS[[3]],HS[[2]],HS[[1]],FR[[5]],FR[[4]],FR[[3]],FR[[2]],FR[[1]]),
+                       Regions = rep(c("Hotspot", "Flanking Region"), each = 5000))
+  
+  data_1$Categorie <- factor(data_1$Categorie, levels=c("-12.5","-25","-50","-100","-200"))
+  
+  file_GC <- paste(folder,"/4_gBGC/GC",sep="")
+  points_GC <- read.table(file_GC)[5:1,]
+  
+  data_2 <- data.frame(Categorie = rep(c("-12.5","-25","-50","-100","-200"),times=2),
+                       Valeur = c(points_GC[,3], points_GC[,2]))
+  
+  ggplot(mapping = aes(x = factor(Categorie, levels=c("-12.5","-25","-50","-100","-200")))) +
+    geom_boxplot(data=data_1, mapping = aes(x = factor(Categorie), y=Valeur, fill = Regions)) + 
+    geom_point(data=data_2,colour=rep(c("#8B0000", "#00008B"), time = 5), size= 2, aes(y=Valeur),position=position_dodge2(width = 0.8 , preserve = "total")) + 
+    xlab("Date of Hotspots' appearance (in k years)") +
+    ylab("GC*") +
+    ggtitle("GC* over Flanking regions and Hotspots for sets of parameters 1 to 5")+
+  theme(plot.title = element_text(hjust = 0.5))
+  
+}
+
+```
+
+
+
+```{r}
+get_bootstrap_gBGC_2 <- function(folder) 
+  
+#traces bootstrap and point for the set of parameters 6 to 9.
+  
+  {
+  
+
+  FR <- list()
+  HS <- list()
+  
+  for (param in 6:9) {
+    file_FR <- paste(folder,"/4_gBGC/Param_",param,"/GC_bootstrap_FR.txt",sep="")
+    file_HS <- paste(folder,"/4_gBGC/Param_",param,"/GC_bootstrap_HS.txt",sep="")
+    
+    FR[[param]] <- as.numeric(readLines(file_FR))
+    HS[[param]] <- as.numeric(readLines(file_HS))
+  }
+  
+  
+  data_1 <- data.frame(Categorie = c(rep("-12.5", times = 1000),rep("-25", times = 1000),rep("-50", times = 1000),rep("-100", times = 1000)),
+                       Valeur = c(HS[[9]],HS[[8]],HS[[7]],HS[[6]],FR[[9]],FR[[8]],FR[[7]],FR[[6]]),
+                       Regions = rep(c("Hotspot", "Flanking Regions"), each = 4000))
+  
+  file_GC <- "/home/jaeger/sshfs-path_4/Simulation_3/4_gBGC/GC"
+  points_GC <- read.table(file_GC)[9:6,]
+  
+  data_2 <- data.frame(Categorie = rep(c("-12.5","-25","-50","-100"),times=2),
+                       Valeur = c(points_GC[,3], points_GC[,2]))
+  
+  data_1$Categorie <- factor(data_1$Categorie,levels=c("-12.5","-25","-50","-100"))
+  
+  ggplot(mapping = aes(x = factor(Categorie,levels=c("-12.5","-25","-50","-100")))) +
+    geom_boxplot(data=data_1, mapping = aes(x = factor(Categorie), y=Valeur, fill = Regions)) + 
+    geom_point(data=data_2,colour=rep(c("#8B0000", "#00008B"), time =4), size= 2, aes(y=Valeur),position=position_dodge2(width = 0.8 , preserve = "total")) + 
+    xlab("Date of Hotspots' Extinction (in k years)") +
+    ylab("GC*") +
+    ggtitle("GC* over Flanking regions and Hotspots for sets of parameters 6 to 9")+
+  theme(plot.title = element_text(hjust = 0.5))
+  
+}
+```
+
+```{r}
+folder <- "/home/jaeger/sshfs-path_4/Simulation_4"
+get_bootstrap_gBGC_1(folder)
+```
+
+
+```{r}
+folder <- "/home/jaeger/sshfs-path_4/Simulation_4"
+get_bootstrap_gBGC_2(folder)
+```
+
+
+
+### Recombination map 
+
+With the use of ldhelmet we are going to trace mean recombination maps for each set of parameters.<br>
+**How did we use ldhelmet to obtain this data?** 
+
+We generate a lookup table with all the sets of parameters. (It's a concatenate of all the Fasta files). Then for each of the locus we run the rjmcmc function to have the recombination rate by bp on the sequences (mean, median, quartile). With this data, we calculate a mean recombination map for each set of parameters.
+
+```{r}
+if (!require(ggplot2)) {
+  install.packages("ggplot2")
+  library(ggplot2)
+}
+
+get_LD <- function(file) {
+  table <- read.table(file, skip =2, col.names= c("left_snp", "right_snp", "mean", "p0.025", "p0.50", "p0.975"))
+  return(table)
+}
+
+
+recombination_all <- function(N,param,folder,out) {
+  LD <- data.frame()
+  for (i in 1:N) {
+  file <- paste(folder,"/output_",i,".text",sep="")
+    if (file.exists(file)) {
+    #print(file)
+    table <- get_LD(file)
+    LD <- rbind(LD,data.frame("left_snp"=table$left_snp,"right_snp"=table$right_snp, "mean"=table$p0.50))
+    }
+  }
+  write.table(LD,file=out)
+  return(LD)
+}
+
+
+```
+
+
+```{r}
+
+recombination_map <- function(L,R,param,IN,OUT) {
+ bp <- 0
+ file <- IN
+ if (file.exists(file)) {
+ LD <- data.frame()
+ table <- read.table(file,header=TRUE)
+  while (bp <= (L-R)) {
+    lines <- c((table$left_snp <= bp & table$right_snp > (bp+R)) == TRUE)
+    r <- mean(table$mean[lines])
+    LD <- rbind(LD,data.frame("bp"=(bp+1):(bp+R),"mean_r"=rep(r,times=R)))
+    bp <- bp+R
+    
+  }
+ write.table(LD,file=OUT)
+ return(LD)
+ } else {print("Le fichier concatenate recherché n'existe pas ")}
+}
+
+```
+
+
+```{r}
+
+trace_recombination_map <- function(IN,param,L) {
+  
+  data_1 <- read.table(IN)
+  x1 <- c(1:L)
+  y1 <- c(rep(0.002,times=as.integer(2*round(L/5))),rep(0.05,times=as.integer(round(L/5))),rep(0.002,times=as.integer(2*round(L/5))))
+  
+    ggplot() +
+    geom_line(data=data_1, colour="blue",mapping = aes(x = data_1$bp, y=data_1$mean_r)) + 
+    geom_line(colour="black",linetype=3,aes(x=x1, y=y1)) + 
+    xlab("bp") +
+    ylab("rho") +
+    ggtitle("Mean recombination rate across sequences")
+  
+}
+
+```
+
+
+
+```{r}
+N=2000
+param=1
+R <- 10
+L <- 10000
+
+folder <- paste("/home/jaeger/sshfs-path_4/Simulation_4/3_Output_ldhelmet/Param_",param,sep="")
+out <- paste("/home/jaeger/sshfs-path_4/Simulation_4/3_Output_ldhelmet/Concatenate_",param,sep="")
+
+recombination_all(N,param,folder,out)
+
+
+IN <- paste("/home/jaeger/sshfs-path_4/Simulation_4/3_Output_ldhelmet/Concatenate_",param,sep="")
+OUT <- paste("/home/jaeger/sshfs-path_4/Simulation_4/3_Output_ldhelmet/Recombination_",param,sep="")
+
+recombination_map(L,R,param,IN,OUT)
+
+```
+
+```{r}
+N=2000
+param=2
+R <- 10
+L <- 10000
+
+folder <- paste("/home/jaeger/sshfs-path_4/Simulation_4/3_Output_ldhelmet/Param_",param,sep="")
+out <- paste("/home/jaeger/sshfs-path_4/Simulation_4/3_Output_ldhelmet/Concatenate_",param,sep="")
+
+recombination_all(N,param,folder,out)
+
+
+IN <- paste("/home/jaeger/sshfs-path_4/Simulation_4/3_Output_ldhelmet/Concatenate_",param,sep="")
+OUT <- paste("/home/jaeger/sshfs-path_4/Simulation_4/3_Output_ldhelmet/Recombination_",param,sep="")
+
+recombination_map(L,R,param,IN,OUT)
+
+```
+
+```{r}
+N=2000
+param=3
+R <- 10
+L <- 10000
+
+folder <- paste("/home/jaeger/sshfs-path_4/Simulation_4/3_Output_ldhelmet/Param_",param,sep="")
+out <- paste("/home/jaeger/sshfs-path_4/Simulation_4/3_Output_ldhelmet/Concatenate_",param,sep="")
+
+recombination_all(N,param,folder,out)
+
+
+IN <- paste("/home/jaeger/sshfs-path_4/Simulation_4/3_Output_ldhelmet/Concatenate_",param,sep="")
+OUT <- paste("/home/jaeger/sshfs-path_4/Simulation_4/3_Output_ldhelmet/Recombination_",param,sep="")
+
+recombination_map(L,R,param,IN,OUT)
+
+```
+
+```{r}
+N=2000
+param=4
+R <- 10
+L <- 10000
+
+folder <- paste("/home/jaeger/sshfs-path_4/Simulation_4/3_Output_ldhelmet/Param_",param,sep="")
+out <- paste("/home/jaeger/sshfs-path_4/Simulation_4/3_Output_ldhelmet/Concatenate_",param,sep="")
+
+recombination_all(N,param,folder,out)
+
+
+IN <- paste("/home/jaeger/sshfs-path_4/Simulation_4/3_Output_ldhelmet/Concatenate_",param,sep="")
+OUT <- paste("/home/jaeger/sshfs-path_4/Simulation_4/3_Output_ldhelmet/Recombination_",param,sep="")
+
+recombination_map(L,R,param,IN,OUT)
+
+```
+
+```{r}
+N=2000
+param=5
+R <- 10
+L <- 10000
+
+folder <- paste("/home/jaeger/sshfs-path_4/Simulation_4/3_Output_ldhelmet/Param_",param,sep="")
+out <- paste("/home/jaeger/sshfs-path_4/Simulation_4/3_Output_ldhelmet/Concatenate_",param,sep="")
+
+recombination_all(N,param,folder,out)
+
+
+IN <- paste("/home/jaeger/sshfs-path_4/Simulation_4/3_Output_ldhelmet/Concatenate_",param,sep="")
+OUT <- paste("/home/jaeger/sshfs-path_4/Simulation_4/3_Output_ldhelmet/Recombination_",param,sep="")
+
+recombination_map(L,R,param,IN,OUT)
+
+```
+
+```{r}
+N=2000
+param=6
+R <- 10
+L <- 10000
+
+folder <- paste("/home/jaeger/sshfs-path_4/Simulation_4/3_Output_ldhelmet/Param_",param,sep="")
+out <- paste("/home/jaeger/sshfs-path_4/Simulation_4/3_Output_ldhelmet/Concatenate_",param,sep="")
+
+recombination_all(N,param,folder,out)
+
+
+IN <- paste("/home/jaeger/sshfs-path_4/Simulation_4/3_Output_ldhelmet/Concatenate_",param,sep="")
+OUT <- paste("/home/jaeger/sshfs-path_4/Simulation_4/3_Output_ldhelmet/Recombination_",param,sep="")
+
+recombination_map(L,R,param,IN,OUT)
+
+```
+
+```{r}
+N=2000
+param=7
+R <- 10
+L <- 10000
+
+folder <- paste("/home/jaeger/sshfs-path_4/Simulation_4/3_Output_ldhelmet/Param_",param,sep="")
+out <- paste("/home/jaeger/sshfs-path_4/Simulation_4/3_Output_ldhelmet/Concatenate_",param,sep="")
+
+recombination_all(N,param,folder,out)
+
+
+IN <- paste("/home/jaeger/sshfs-path_4/Simulation_4/3_Output_ldhelmet/Concatenate_",param,sep="")
+OUT <- paste("/home/jaeger/sshfs-path_4/Simulation_4/3_Output_ldhelmet/Recombination_",param,sep="")
+
+recombination_map(L,R,param,IN,OUT)
+
+```
+
+```{r}
+N=2000
+param=8
+R <- 10
+L <- 10000
+
+folder <- paste("/home/jaeger/sshfs-path_4/Simulation_4/3_Output_ldhelmet/Param_",param,sep="")
+out <- paste("/home/jaeger/sshfs-path_4/Simulation_4/3_Output_ldhelmet/Concatenate_",param,sep="")
+
+recombination_all(N,param,folder,out)
+
+
+IN <- paste("/home/jaeger/sshfs-path_4/Simulation_4/3_Output_ldhelmet/Concatenate_",param,sep="")
+OUT <- paste("/home/jaeger/sshfs-path_4/Simulation_4/3_Output_ldhelmet/Recombination_",param,sep="")
+
+recombination_map(L,R,param,IN,OUT)
+
+```
+
+```{r}
+N=2000
+param=9
+R <- 10
+L <- 10000
+
+folder <- paste("/home/jaeger/sshfs-path_4/Simulation_4/3_Output_ldhelmet/Param_",param,sep="")
+out <- paste("/home/jaeger/sshfs-path_4/Simulation_4/3_Output_ldhelmet/Concatenate_",param,sep="")
+
+recombination_all(N,param,folder,out)
+
+
+IN <- paste("/home/jaeger/sshfs-path_4/Simulation_4/3_Output_ldhelmet/Concatenate_",param,sep="")
+OUT <- paste("/home/jaeger/sshfs-path_4/Simulation_4/3_Output_ldhelmet/Recombination_",param,sep="")
+
+recombination_map(L,R,param,IN,OUT)
+
+```
+
+```{r}
+recombination_map_1_5 <- function(file_names)
+#Supplying a vector containing 5 name files corresponding to out of the function recombination_map, corresponding to the parameter set 1 to 5, 5 the recombination maps will be plot on the same graph
+{
+
+plot(0, type = "n", xlim = c(0, 10000), ylim = c(0, 0.01), xlab = "bp", ylab = expression(rho), bty = "n", col.axis = "black", col.lab = "black", bg = "white")
+
+# Plot lines from each table
+for (i in 1:5) {
+  # Read the data from the TXT file
+  data <- read.table(file_names[i], header = TRUE)
+  couleurs <- c("#080a55","#0a28ab","#098f93","#078e20","#a5a708")
+  
+  # Extract the x and y values from the data
+  x <- data$bp
+  y <- data$mean_r
+  
+  # Plot the line with a unique color for each file
+  lines(x, y, col=couleurs[i],lwd=1.5)
+}
+
+# Add a legend
+legend("topright",title=paste("Date of Hotspots' appearance,","( in k years)",sep="\n"), legend = c("-200","-100","-50","-25","-12.5"), col = couleurs, lty = 1,lwd=1.5, cex = 0.8)
+title(main="Mean population scaled recombination rate Map")
+}
+```
+
+```{r}
+recombination_map_6_9 <- function(file_names)
+#Supplying a vector containing 5 name files corresponding to out of the function recombination_map, corresponding to the parameter set 1 to 5, 5 the recombination maps will be plot on the same graph
+{
+
+plot(0, type = "n", xlim = c(0, 10000), ylim = c(0, 0.03), xlab = "bp", ylab = expression(rho), bty = "n", col.axis = "black", col.lab = "black", bg = "white")
+couleurs <- c("darkorange","#c87e0b","pink","#9e0775")
+
+# Plot lines from each table
+for (i in 1:4) {
+  # Read the data from the TXT file
+  data <- read.table(file_names[i], header = TRUE)
+  
+  # Extract the x and y values from the data
+  x <- data$bp
+  y <- data$mean_r
+  
+  # Plot the line with a unique color for each file
+  lines(x, y, col=couleurs[i],lwd=1.5)
+}
+
+# Add a legend
+legend("topright",title=paste("Date of Hotspots' extinction,","( in k years)",sep="\n"), legend = c("-100","-50","-25","-12.5"), col = couleurs, lty = 1,lwd=1.5, cex = 0.8)
+title(main="Mean population scaled recombination rate Map")
+}
+```
+
+```{r}
+#Folder which contains the Recombination_* files
+IN <- "/home/jaeger/sshfs-path_4/Simulation_4/3_Output_ldhelmet"
+
+file_names <- c(paste(IN,"/Recombination_1",sep=""), paste(IN,"/Recombination_2",sep=""), paste(IN,"/Recombination_3",sep=""), paste(IN,"/Recombination_4",sep=""), paste(IN,"/Recombination_5",sep=""))
+
+recombination_map_1_5(file_names)
+```
+
+```{r}
+IN <- "/home/jaeger/sshfs-path_4/Simulation_4/3_Output_ldhelmet"
+
+file_names <- c(paste(IN,"/Recombination_6",sep=""), paste(IN,"/Recombination_7",sep=""), paste(IN,"/Recombination_8",sep=""), paste(IN,"/Recombination_9",sep=""))
+
+recombination_map_6_9(file_names)
+```
+
+
+### Heterozygosity Measure
+
+We want to ensure that $\Pi$ corrsponds approximately to the human value of approximately $10^{-3}$. We trace the boxplots of the heterozygosity at the beginning and the end of the simulation, for each set of parameter.
+
+```{r}
+
+if (!require(ggplot2)) {
+  install.packages("ggplot2")
+  library(ggplot2)
+}
+
+get_h <- function(folder,d,f,param) {
+  #from a folder containing all the outfiles of a simulation with a given set of parameter we plot get the mean heterozygosity at the beginning and the end of each run.
+  data <- data.frame()
+  for(i in d:f) {
+    file_h <- paste(folder,"/loci_",i,"/heterozygosity_",i,sep="")
+    
+    if (file.exists(file_h)) {
+    table_h <- read.table(file_h, header=FALSE)
+    H <- data.frame(het_0=table_h[1,2],het_f_2=table_h[3,2])
+    data <- rbind(data,H)
+    }
+  }
+    write.table(data, file=paste("/home/jaeger/sshfs-path_4/Simulation_4/Het_",param,sep=""))
+    return(data)
+}
+
+trace_mean_h <- function()
+  #We trace the mean of het_0 and het_f from the Het files precendently created in the form of boxplots
+{
+ mean_het_0 <- c()
+  mean_het_f <- c()
+  
+  for (i in 1:9) {
+    file_name <- paste("/home/jaeger/sshfs-path_4/Simulation_4/Het_",i,sep="")
+    table_h <- read.table(file_name,header=TRUE)
+    mean_het_0 <- c(mean_het_0,mean(table_h$het_0))
+    mean_het_f <- c(mean_het_f,mean(table_h$het_f_2))
+  }
+  print(mean_het_0)
+  print(mean_het_f)
+  data_0 <- data.frame(value = c(mean_het_0,mean_het_f), 
+                       Parameters = rep(c("1","2","3","4","5","6","7","8","9"),times=2), 
+                       Time =factor(c(rep("Initial",times=9),rep("Final",times=9)),level=c("Initial","Final")))
+
+ 
+  ggplot(data_0,mapping = aes(x=factor("1","2","3","4","5","6","7","8","9"))) +
+   geom_point(data=data_0, mapping=aes(x= Parameters, y= value,color=Time, fill=Time))+
+    scale_color_manual(values = c("lightpink","purple"))+
+    
+  labs(title = "Heterozygosity for Simulation 4",
+       x = "Parameters Set",
+       y = "Heterozygosity index")+
+  theme(plot.title = element_text(hjust = 0.5))
+  
+}
+```
+
+```{r}
+for (param in 1:9) {
+  folder <- paste0("/home/jaeger/sshfs-path_4/Simulation_4/2_Data_Slim/Out_Slim/Param_",param)
+get_h(folder,0,2000,param)
+}
+
+```
+
+```{r}
+trace_mean_h()
+```
+```{r}
+trace_boxplot_h <- function(table_names) 
+  {
+  # Load required library
+library(ggplot2)
+
+
+combined_df <- data.frame()
+L <- c()
+
+# Combine all dataframes into a single dataframe
+  for (i in 1:9) {
+  table_h <- read.table(file_names[i])  
+  L <- c(L,length(table_h))
+  combined_df <- rbind(deparse.level = 1,
+  combined_df,
+  transform(paste0("df",i), Time = "Initial", Value = table_h$het_0),
+  transform(paste0("df",i), Time = "Final", Value = table_h$het_f_2)
+)
+}
+
+# Create a custom ordering of the categories
+custom_order <- c(as.character(seq(1,9)))
+
+# Convert "Category" column to factor with the custom order
+combined_df$Parameters <- factor(c(rep(1,times=L[1]), rep(2,times=L[2]), rep(3,times=L[3]), rep(4,times=L[4]), rep(5,times=L[5]), rep(6,times=L[6]), rep(7,times=L[7]), rep(8,times=L[8]), rep(9,times=L[9])), levels = custom_order)
+
+boxplot_colors <- c("Initial"="lightpink", "Final"="purple")
+# Create the ggplot
+ggplot(combined_df, aes(x = Parameters, y = Value, fill = factor(Time, levels = c("Initial", "Final")))) +
+  geom_boxplot(position = position_dodge(width = 0.8), width = 0.6) +
+  scale_fill_manual(values = boxplot_colors) +
+  labs(title = "Heterozygosity for Simulation 4",
+       x = "Parameters",
+       y = "Heterozygosity index",
+       fill="Time") +
+  theme(plot.title = element_text(hjust = 0.5))+
+  geom_hline(yintercept = 0.00125, linetype = "dotted", color = "black",lwd=1.5)
+
+  
+}
+```
+
+```{r}
+file_names <- c()
+folder <- "/home/jaeger/sshfs-path_4/Simulation_4"
+for (i in 1:9) {
+  file_het <- paste0(folder,"/Het_",i)
+  file_names <- c(file_names, file_het)
+}
+
+```
+
+```{r}
+combined_df <- data.frame()
+L <- c()
+
+# Combine all dataframes into a single dataframe
+  for (i in 1:9) {
+  table_h <- read.table(file_names[i])  
+  L <- c(L,length(table_h))
+  combined_df <- rbind(deparse.level = 1,
+  combined_df,
+  transform(paste0("df",i), Time = "Initial", Value = table_h$het_0),
+  transform(paste0("df",i), Time = "Final", Value = table_h$het_f_2)
+)
+  }
+combined_df
+```
+
+```{r}
+trace_boxplot_h(file_names)
+```
+
+Seeing the lower $\Pi$ (2x lower approximately that in simulation 3), we can not conclude on the LD at the end of the simulation,because we close to the limit of LDhelmet resolution. Because of the difference in $\Pi$, we can compare the sets of parameters for this model, but we cannot compare with the model using a constant Ne. 

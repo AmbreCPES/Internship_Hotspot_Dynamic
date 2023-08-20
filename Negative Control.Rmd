@@ -1,0 +1,530 @@
+---
+title: "Negative Control"
+output: html_notebook
+---
+
+### Negative Control 1
+
+We observed in both simulation that the GC* is around 0.5 in Flanking Region. However the GC* predict by the mutation matrix is around 0.3. It corresponds to the value of WS over the value of all mutations..
+This phenomenon could be caused by the evolution over 14000 generations and the recombination that occurs which raises the GC* in the Flanking regions. 
+To verify this hypothesis, we simulate 100 runs without recombination and <ith the same parameters that Simulation_3. 
+
+```{r}
+
+cut_VCF <- function(file_name,IN) 
+  
+  #from VCF file we get a 2 column data frame with for each SNP the ancestral nucleotide and the new one, each row is named with the position of the SNP (index from 0)
+  
+{
+  file <- paste(IN,file_name,sep="")
+  if (length(readLines(file))>15) {
+    tableau <- read.table(file, sep="\t", header=F)
+    D<- data.frame("anc"=tableau$V4,"new"= tableau$V5 ,row.names=tableau$V2)
+    return(D)
+  }else {
+    return(0)
+  }
+}
+
+get_GC_anc <- function(file_path,IN,L,L_HS)
+  
+  #from a sequence of nucleotides in a file in the Fasta format, we obtain the number of Strong (S) nucleotides (GC), the number of Weak (W) nucleotides (AT) in the Hotspot (HS) and the Flanking Region (FR), here the hotspot is 500bp long in the center of 2500 long sequence;
+  
+{
+  path <- paste(IN,file_path,sep="")
+  Seq <- readLines(path)[2] 
+  Seq <- strsplit(Seq[1],split="")[[1]]
+  
+  Count_N_FR <- as.data.frame(table(c(Seq[1:(as.integer(round(L/2))-as.integer(round(L_HS/2)) - 100)],Seq[(as.integer(round(L/2)) + as.integer(round(L_HS/2) +1 +100)):L])))
+  Count_N_HS <- as.data.frame(table(Seq[(as.integer(round(L/2))-as.integer(round(L_HS/2))+1):(as.integer(round(L/2))+as.integer(round(L_HS/2)))]))
+  
+  Count_GC_FR <- as.integer((Count_N_FR$Freq[2]+Count_N_FR$Freq[3]))
+  Count_GC_HS <- as.integer((Count_N_HS$Freq[2]+Count_N_HS$Freq[3]))
+  
+  c("S_HS"=Count_GC_HS, "W_HS"=(L_HS - Count_GC_HS), "S_FR" = Count_GC_FR, "W_FR"=((L-200-L_HS) - Count_GC_FR))
+}
+
+get_mut <- function(file_name,IN,L,L_HS)
+  
+  #from a VCF file, we get the number of W to S mutations ans of S to W mutations in the HS and the FR. 
+  
+{
+  VCF <- cut_VCF(file_name,IN)
+  if (is.data.frame(VCF)==F) {
+    return(c("SW_count_HS"=0, "WS_count_HS"= 0, "SW_count_FR"=0, "WS_count_FR"=0 ))
+  }else {
+    lines_FR <- (as.integer(row.names(VCF)) <= (as.integer(round(L/2))-as.integer(round(L_HS/2)))-100) | (as.integer(row.names(VCF)) >= (as.integer(round(L/2))+as.integer(round(L_HS/2)))+100+1)
+    lines_HS <- (as.integer(row.names(VCF)) >= (as.integer(round(L/2))-as.integer(round(L_HS/2)))+1) & (as.integer(row.names(VCF)) <= (as.integer(round(L/2))+as.integer(round(L_HS/2))))
+    FR <- VCF[lines_FR,]
+    HS <- VCF[lines_HS,]
+    
+    SW_count_HS <- sum((HS$anc == "G" | HS$anc =="C") & (HS$new == "A" | HS$new =="T") == TRUE )
+    WS_count_HS <- sum((HS$new == "G" | HS$new =="C") & (HS$anc == "A" | HS$anc =="T") == TRUE )
+    
+    SW_count_FR <- sum((FR$anc == "G" | FR$anc =="C") & (FR$new == "A" | FR$new =="T") == TRUE )
+    WS_count_FR <- sum((FR$new == "G" | FR$new =="C") & (FR$anc == "A" | FR$anc =="T") == TRUE )
+    
+    return(c("SW_count_HS"=SW_count_HS, "WS_count_HS"= WS_count_HS, "SW_count_FR"=SW_count_FR, "WS_count_FR"=WS_count_FR ))
+  }
+}
+```
+
+```{r}
+  L <- 25000
+  L_HS <- 2000
+  
+  for (loci in 100:200){
+    IN <- "/home/jaeger/sshfs-path_4/Simulation_3/2_Data_Slim/Out_Slim/controle_neg"
+    
+    
+    folder <- "/home/jaeger/sshfs-path_4/Simulation_3"
+    
+    file_VCF <- paste("/loci_",loci,"/outputVCF_",loci,sep="")
+    file_Seq <- paste("/loci_",loci,"/ancSeq_",loci,sep="")
+    file_priors <- paste("/loci_",loci,"/ancPriors_",loci,sep="")
+    
+    if (file.exists(paste(IN,file_priors,sep=""))){
+        #Some runs dysfunctioned and files were not properly created
+      mutations <- get_mut(file_VCF,IN,L,L_HS)
+      count <- get_GC_anc(file_Seq,IN,L,L_HS)
+      
+      S <- count["S_HS"]
+      W <- count["W_HS"]
+      
+      SW <- mutations["SW_count_HS"]
+      WS <- mutations["WS_count_HS"]
+      
+      if (dir.exists(paste(folder,"/4_gBGC/controle_neg", sep=""))==FALSE){
+        dir.create(paste(folder,"/4_gBGC/controle_neg", sep=""))
+      }
+        
+      if (file.exists(paste(folder,"/4_gBGC/controle_neg/HS.txt", sep=""))) {
+        cat(paste(loci, W, S, WS, SW, "\n",sep=" "), file = paste(folder,"/4_gBGC/controle_neg/intermed_HS.txt", sep=""))
+        file.append(paste(folder,"/4_gBGC/controle_neg/HS.txt", sep=""), paste(folder,"/4_gBGC/controle_neg/intermed_HS.txt", sep=""))
+      }else{
+        cat(paste("#loci ","#W ","#S ","#WS ","#SW\n",as.integer(loci)," ",W," ", S, " ", WS, " ",SW,"\n", sep=""), file=paste(folder,"/4_gBGC/controle_neg/HS.txt", sep=""))
+      }
+      
+      S <- count["S_FR"]
+      W <- count["W_FR"]
+      
+      SW <- mutations["SW_count_FR"]
+      WS <- mutations["WS_count_FR"]
+      
+      if (file.exists(paste(folder,"/4_gBGC/controle_neg/FR.txt", sep=""))) {
+        cat(paste(loci, W, S, WS, SW,"\n",sep=" "), file = paste(folder,"/4_gBGC/controle_neg/intermed_FR.txt", sep=""))
+        file.append(paste(folder,"/4_gBGC/controle_neg/FR.txt", sep=""), paste(folder,"/4_gBGC/controle_neg/intermed_FR.txt", sep=""))
+    }else{
+      cat(paste("loci ","W ","S ","WS ","SW\n",as.integer(loci)," ",W," ", S, " ", WS, " ",SW,"\n", sep=""), file=paste(folder,"/4_gBGC/controle_neg/FR.txt", sep=""))
+    }
+    }else
+      {Slim_error <- c(Slim_error,paste("Param_",param,"loci_",loci))}
+  }
+
+```
+
+
+
+
+```{r}
+
+get_v <- function(table) 
+  
+#Number of mutations S to W divided by the number of S bases, SW/S. We calculate this indicator for every loci of each set of parameters.
+  
+{
+  v <- sum(table[,5])/sum(table[,3])
+
+  return(v)
+}
+
+get_u <- function(table) 
+  
+#Number of mutations W to S divided by the number of S bases, WS/W. We calculate this indicator for every loci of each set of parameters.
+  
+{
+  u <- sum(table[,4])/sum(table[,2])
+
+  return(u)
+}
+
+get_GC <- function(table) 
+#u/(u+v)
+{
+  u <- get_u(table)
+  v <- get_v(table)
+  
+  GC <- u/(u+v)
+  
+  if (is.nan(GC)) {GC <- 0} 
+  
+#If NaN because division by 0 because no SW or WS. It's possible if weak mutation rate. It corresponds to weak Gene Conversion so set to 0.
+  
+  return(GC)
+}
+
+```
+
+```{r}
+
+folder <- "/home/jaeger/sshfs-path_4/Simulation_3"
+file_FR <- paste(folder,"/4_gBGC/controle_neg/FR.txt",sep="")
+file_HS <- paste(folder,"/4_gBGC/controle_neg/HS.txt",sep="")
+
+GC_HS <- get_GC(read.table(file_HS,header=TRUE))
+GC_FR <- get_GC(read.table(file_FR,header=TRUE))
+
+cat(paste("Param ","GC_HS ","GC_FR\n","Controle_neg"," ",GC_HS," ", GC_FR,"\n", sep=""), file=paste(folder,"/4_gBGC/GC_controle_neg", sep=""))
+
+```
+```{r}
+folder <- "/home/jaeger/sshfs-path_4/Simulation_3"
+file_GC=paste(folder,"/4_gBGC/GC_controle_neg", sep="")
+read.table(file_GC,header=TRUE)
+```
+We trace bootstap for both this index, to have an idea of the confidence interval.
+
+```{r}
+bootstrap <- function(file_HS,file_FR,N) {
+  table_HS <- read.table(file_HS, header=TRUE, row.names=NULL)
+  table_FR <- read.table(file_FR,header=TRUE, row.names=NULL)
+  L <- nrow(table_HS)
+  if (L!=nrow(table_FR)) {
+    return(print("ERREUR: TABLES HS AND FR OF DIFFERENT LENGTH"))
+  }
+  GC_HS <- NULL
+  GC_FR <- NULL
+  for (i in 1:N) {
+  SAMPLE <- sample(1:L,L,replace=TRUE)
+  B_HS <- data.frame(table_HS[SAMPLE,],row.names=NULL)
+  B_FR <- data.frame(table_FR[SAMPLE,],row.names=NULL)
+  
+  GC_HS <- c(GC_HS, get_GC(B_HS))
+  GC_FR <- c(GC_FR, get_GC(B_FR))
+  }
+  return(c("GC_HS"=GC_HS, "GC_FR"=GC_FR))
+}
+```
+
+```{r}
+N <- 100
+  file_HS <- "/home/jaeger/sshfs-path_4/Simulation_3/4_gBGC/controle_neg/HS.txt"
+  file_FR <- "/home/jaeger/sshfs-path_4/Simulation_3/4_gBGC/controle_neg/FR.txt"
+  folder <- "/home/jaeger/sshfs-path_4/Simulation_3/4_gBGC/controle_neg"
+  
+  GC <- bootstrap(file_HS,file_FR,N)
+  GC_HS <- GC[1:N]
+  GC_FR <- GC[(N+1):(2*N)]
+  
+  cat(paste(GC_HS,"\n",sep=""), file = paste(folder,"/GC_bootstrap_HS.txt", sep=""))
+  cat(paste(GC_FR,"\n",sep=""), file = paste(folder,"/GC_bootstrap_FR.txt", sep=""))
+```
+
+```{r}
+if (!require(ggplot2)) {
+  install.packages("ggplot2")
+  library(ggplot2)
+}
+
+get_bootstrap_gBGC <- function(folder,file_GC,N) 
+  
+  # bootstrap for one set of parameter
+{
+  
+  FR <- list()
+  HS <- list()
+  
+  file_FR <- paste(folder,"/GC_bootstrap_FR.txt",sep="")
+  file_HS <- paste(folder,"/GC_bootstrap_HS.txt",sep="")
+    
+  FR <- as.numeric(readLines(file_FR))
+  HS <- as.numeric(readLines(file_HS))
+  
+  data_1 <- data.frame(Valeur = c(HS,FR),
+                       Regions = rep(c("Hotspot", "Flanking Region"), each = N))
+  
+
+  points_GC <- read.table(file_GC,header=TRUE)
+  
+  data_2 <- data.frame(Regions = c("Hotspot", "Flanking Region"),
+                       Valeur = c(points_GC[,3], points_GC[,2]))
+  
+  ggplot(mapping = aes(x = factor(Regions))) +
+    geom_boxplot(data=data_1, mapping = aes(x = Regions , y=Valeur, fill = Regions)) + 
+    
+    geom_point(data=data_2,colour=c("#8B0000", "#00008B"), size= 2, aes(y=Valeur),position=position_dodge2(width = 0.8 , preserve = "total")) + 
+    xlab("") +
+    ylab("GC*") +
+    ggtitle("Bootstrap of GC* for Hotspots of varying duration")+
+     theme(plot.title = element_text(hjust = 0.5))
+}
+
+```
+
+```{r}
+folder <- "/home/jaeger/sshfs-path_4/Simulation_3/4_gBGC/controle_neg"
+file_GC <- "/home/jaeger/sshfs-path_4/Simulation_3/4_gBGC/GC_controle_neg"
+get_bootstrap_gBGC(folder,file_GC,100)
+```
+
+
+We measure the heterozigosity in SLiM. To ensure that it is around $\Pi = 10^{-3}$ as we expect from our parameters.
+```{r}
+get_h <- function(folder,d,f) {
+  #from a folder containing all the outfiles of a simulation with a given set of parameter we plot get the mean heterozygosity at the beginning and the end of each run.
+  data <- data.frame()
+  for(i in d:f) {
+    file_h <- paste(folder,"/loci_",i,"/heterozygosity_",i,sep="")
+    
+    if (file.exists(file_h)) {
+    table_h <- read.table(file_h, header=FALSE)
+    H <- data.frame(het_0=table_h[1,2],het_f=table_h[2,2])
+    data <- rbind(data,H)
+    }
+  }
+    write.table(data, file=paste(folder,"/Het",sep=""))
+    return(data)
+}
+
+trace_h <- function(file_h)
+  #We trace the Het file precendently created in the form of a boxplot
+{
+  table_h <- read.table(file_h)
+  L <- length(table_h)
+  ggplot(table_h,mapping = aes(x=factor("0","14000"))) +
+  geom_boxplot(data=table_h,aes(x="0",y=table_h$het_0),fill="darkorange") +
+   geom_boxplot(data=table_h,aes(x="14000",y=table_h$het_f)) + 
+  labs(title = "Boxplots of heterozygosity for Negative control runs",
+       x = "Generation",
+       y = "Heterozygosity index")+
+  theme(plot.title = element_text(hjust = 0.5))
+  
+}
+```
+
+
+```{r}
+folder <- "/home/jaeger/sshfs-path_4/Simulation_3/2_Data_Slim/Out_Slim/controle_neg"
+get_h(folder,100,200)
+```
+```{r}
+file_h <- "/home/jaeger/sshfs-path_4/Simulation_3/2_Data_Slim/Out_Slim/controle_neg/Het"
+trace_h(file_h)
+```
+
+
+We see that the GC equilibrium without recombination, is way higher than the expected value. We suppose that this might be due to the MS initialization. Indeed the mutations initialize in the first generation are chosen at random and not according to the mutation matrix inputted in SLiM.
+
+### Control Negative 2
+
+To verify thos hipothesis, we perform the same runs but without, the initialisation in MS. So the population is not at a pomymorphic stability during the simulation and $\Pi$ is inferior to realistic values.
+
+```{r}
+ L <- 25000
+  L_HS <- 2000
+  
+  for (loci in 100:200){
+    IN <- "/home/jaeger/sshfs-path_4/Simulation_3/2_Data_Slim/Out_Slim/controle_neg_2"
+    
+    
+    folder <- "/home/jaeger/sshfs-path_4/Simulation_3"
+    
+    file_VCF <- paste("/loci_",loci,"/outputVCF_",loci,sep="")
+    file_Seq <- paste("/loci_",loci,"/ancSeq_",loci,sep="")
+    file_priors <- paste("/loci_",loci,"/ancPriors_",loci,sep="")
+    
+    if (file.exists(paste(IN,file_priors,sep=""))){
+        #Some runs dysfunctioned and files were not properly created
+      mutations <- get_mut(file_VCF,IN,L,L_HS)
+      count <- get_GC_anc(file_Seq,IN,L,L_HS)
+      
+      S <- count["S_HS"]
+      W <- count["W_HS"]
+      
+      SW <- mutations["SW_count_HS"]
+      WS <- mutations["WS_count_HS"]
+      
+      if (dir.exists(paste(folder,"/4_gBGC/controle_neg_2", sep=""))==FALSE){
+        dir.create(paste(folder,"/4_gBGC/controle_neg_2", sep=""))
+      }
+        
+      if (file.exists(paste(folder,"/4_gBGC/controle_neg_2/HS.txt", sep=""))) {
+        cat(paste(loci, W, S, WS, SW, "\n",sep=" "), file = paste(folder,"/4_gBGC/controle_neg_2/intermed_HS.txt", sep=""))
+        file.append(paste(folder,"/4_gBGC/controle_neg_2/HS.txt", sep=""), paste(folder,"/4_gBGC/controle_neg_2/intermed_HS.txt", sep=""))
+      }else{
+        cat(paste("#loci ","#W ","#S ","#WS ","#SW\n",as.integer(loci)," ",W," ", S, " ", WS, " ",SW,"\n", sep=""), file=paste(folder,"/4_gBGC/controle_neg_2/HS.txt", sep=""))
+      }
+      
+      S <- count["S_FR"]
+      W <- count["W_FR"]
+      
+      SW <- mutations["SW_count_FR"]
+      WS <- mutations["WS_count_FR"]
+      
+      if (file.exists(paste(folder,"/4_gBGC/controle_neg_2/FR.txt", sep=""))) {
+        cat(paste(loci, W, S, WS, SW,"\n",sep=" "), file = paste(folder,"/4_gBGC/controle_neg_2/intermed_FR.txt", sep=""))
+        file.append(paste(folder,"/4_gBGC/controle_neg_2/FR.txt", sep=""), paste(folder,"/4_gBGC/controle_neg_2/intermed_FR.txt", sep=""))
+    }else{
+      cat(paste("loci ","W ","S ","WS ","SW\n",as.integer(loci)," ",W," ", S, " ", WS, " ",SW,"\n", sep=""), file=paste(folder,"/4_gBGC/controle_neg_2/FR.txt", sep=""))
+    }
+    }else
+      {Slim_error <- c(Slim_error,paste("Param_",param,"loci_",loci))}
+  }
+```
+
+```{r}
+folder <- "/home/jaeger/sshfs-path_4/Simulation_3"
+file_FR <- paste(folder,"/4_gBGC/controle_neg_2/FR.txt",sep="")
+file_HS <- paste(folder,"/4_gBGC/controle_neg_2/HS.txt",sep="")
+
+GC_HS <- get_GC(read.table(file_HS,header=TRUE))
+GC_FR <- get_GC(read.table(file_FR,header=TRUE))
+
+cat(paste("Param ","GC_HS ","GC_FR\n","Controle_neg_2"," ",GC_HS," ", GC_FR,"\n", sep=""), file=paste(folder,"/4_gBGC/GC_controle_neg_2", sep=""))
+```
+
+```{r}
+folder <- "/home/jaeger/sshfs-path_4/Simulation_3"
+file_GC=paste(folder,"/4_gBGC/GC_controle_neg_2", sep="")
+read.table(file_GC,header=TRUE)
+```
+
+```{r}
+N <- 1000
+  file_HS <- "/home/jaeger/sshfs-path_4/Simulation_3/4_gBGC/controle_neg_2/HS.txt"
+  file_FR <- "/home/jaeger/sshfs-path_4/Simulation_3/4_gBGC/controle_neg_2/FR.txt"
+  folder <- "/home/jaeger/sshfs-path_4/Simulation_3/4_gBGC/controle_neg_2"
+  
+  GC <- bootstrap(file_HS,file_FR,N)
+  GC_HS <- GC[1:N]
+  GC_FR <- GC[(N+1):(2*N)]
+  
+  cat(paste(GC_HS,"\n",sep=""), file = paste(folder,"/GC_bootstrap_HS.txt", sep=""))
+  cat(paste(GC_FR,"\n",sep=""), file = paste(folder,"/GC_bootstrap_FR.txt", sep=""))
+```
+
+```{r}
+folder <- "/home/jaeger/sshfs-path_4/Simulation_3/4_gBGC/controle_neg_2"
+file_GC <- "/home/jaeger/sshfs-path_4/Simulation_3/4_gBGC/GC_controle_neg_2"
+get_bootstrap_gBGC(folder,file_GC,100)
+```
+
+
+```{r}
+folder <- "/home/jaeger/sshfs-path_4/Simulation_3/2_Data_Slim/Out_Slim/controle_neg_2"
+get_h(folder,100,200)
+```
+
+```{r}
+file_h <- "/home/jaeger/sshfs-path_4/Simulation_3/2_Data_Slim/Out_Slim/controle_neg_2/Het"
+trace_h(file_h)
+```
+
+
+So we see that indeed the high GC* is due to the MS input of mutations. But here the polymorphisme is not stable and $\Pi < 10^{-3}$ at the end of the simulation.
+
+### Control negative 3
+
+We want to check that when $\Pi = 10^{-3}$ approximately, the heterozygosity is at the same level that in the 2nd control.
+
+```{r}
+ L <- 25000
+  L_HS <- 2000
+  
+  for (loci in 100:200){
+    IN <- "/home/jaeger/sshfs-path_4/Simulation_3/2_Data_Slim/Out_Slim/controle_neg_3"
+    
+    
+    folder <- "/home/jaeger/sshfs-path_4/Simulation_3"
+    
+    file_VCF <- paste("/loci_",loci,"/outputVCF_",loci,sep="")
+    file_Seq <- paste("/loci_",loci,"/ancSeq_",loci,sep="")
+    file_priors <- paste("/loci_",loci,"/ancPriors_",loci,sep="")
+    
+    if (file.exists(paste(IN,file_priors,sep=""))){
+        #Some runs dysfunctioned and files were not properly created
+      mutations <- get_mut(file_VCF,IN,L,L_HS)
+      count <- get_GC_anc(file_Seq,IN,L,L_HS)
+      
+      S <- count["S_HS"]
+      W <- count["W_HS"]
+      
+      SW <- mutations["SW_count_HS"]
+      WS <- mutations["WS_count_HS"]
+      
+      if (dir.exists(paste(folder,"/4_gBGC/controle_neg_3", sep=""))==FALSE){
+        dir.create(paste(folder,"/4_gBGC/controle_neg_3", sep=""))
+      }
+        
+      if (file.exists(paste(folder,"/4_gBGC/controle_neg_3/HS.txt", sep=""))) {
+        cat(paste(loci, W, S, WS, SW, "\n",sep=" "), file = paste(folder,"/4_gBGC/controle_neg_3/intermed_HS.txt", sep=""))
+        file.append(paste(folder,"/4_gBGC/controle_neg_3/HS.txt", sep=""), paste(folder,"/4_gBGC/controle_neg_3/intermed_HS.txt", sep=""))
+      }else{
+        cat(paste("#loci ","#W ","#S ","#WS ","#SW\n",as.integer(loci)," ",W," ", S, " ", WS, " ",SW,"\n", sep=""), file=paste(folder,"/4_gBGC/controle_neg_3/HS.txt", sep=""))
+      }
+      
+      S <- count["S_FR"]
+      W <- count["W_FR"]
+      
+      SW <- mutations["SW_count_FR"]
+      WS <- mutations["WS_count_FR"]
+      
+      if (file.exists(paste(folder,"/4_gBGC/controle_neg_3/FR.txt", sep=""))) {
+        cat(paste(loci, W, S, WS, SW,"\n",sep=" "), file = paste(folder,"/4_gBGC/controle_neg_3/intermed_FR.txt", sep=""))
+        file.append(paste(folder,"/4_gBGC/controle_neg_3/FR.txt", sep=""), paste(folder,"/4_gBGC/controle_neg_3/intermed_FR.txt", sep=""))
+    }else{
+      cat(paste("loci ","W ","S ","WS ","SW\n",as.integer(loci)," ",W," ", S, " ", WS, " ",SW,"\n", sep=""), file=paste(folder,"/4_gBGC/controle_neg_3/FR.txt", sep=""))
+    }
+    }else
+      {Slim_error <- c(Slim_error,paste("Param_",param,"loci_",loci))}
+  }
+```
+
+```{r}
+folder <- "/home/jaeger/sshfs-path_4/Simulation_3"
+file_FR <- paste(folder,"/4_gBGC/controle_neg_3/FR.txt",sep="")
+file_HS <- paste(folder,"/4_gBGC/controle_neg_3/HS.txt",sep="")
+
+GC_HS <- get_GC(read.table(file_HS,header=TRUE))
+GC_FR <- get_GC(read.table(file_FR,header=TRUE))
+
+cat(paste("Param ","GC_HS ","GC_FR\n","Controle_neg_3"," ",GC_HS," ", GC_FR,"\n", sep=""), file=paste(folder,"/4_gBGC/GC_controle_neg_3", sep=""))
+```
+
+
+```{r}
+folder <- "/home/jaeger/sshfs-path_4/Simulation_3"
+file_GC=paste(folder,"/4_gBGC/GC_controle_neg_3", sep="")
+read.table(file_GC,header=TRUE)
+```
+```{r}
+N <- 100
+  file_HS <- "/home/jaeger/sshfs-path_4/Simulation_3/4_gBGC/controle_neg_3/HS.txt"
+  file_FR <- "/home/jaeger/sshfs-path_4/Simulation_3/4_gBGC/controle_neg_3/FR.txt"
+  folder <- "/home/jaeger/sshfs-path_4/Simulation_3/4_gBGC/controle_neg_3"
+  
+  GC <- bootstrap(file_HS,file_FR,N)
+  GC_HS <- GC[1:N]
+  GC_FR <- GC[(N+1):(2*N)]
+  
+  cat(paste(GC_HS,"\n",sep=""), file = paste(folder,"/GC_bootstrap_HS.txt", sep=""))
+  cat(paste(GC_FR,"\n",sep=""), file = paste(folder,"/GC_bootstrap_FR.txt", sep=""))
+```
+
+```{r}
+folder <- "/home/jaeger/sshfs-path_4/Simulation_3/4_gBGC/controle_neg_2"
+file_GC <- "/home/jaeger/sshfs-path_4/Simulation_3/4_gBGC/GC_controle_neg_2"
+get_bootstrap_gBGC(folder,file_GC,100)
+```
+
+
+
+```{r}
+folder <- "/home/jaeger/sshfs-path_4/Simulation_3/2_Data_Slim/Out_Slim/controle_neg_3"
+get_h(folder,100,200)
+```
+```{r}
+file_h <- "/home/jaeger/sshfs-path_4/Simulation_3/2_Data_Slim/Out_Slim/controle_neg_3/Het"
+trace_h(file_h)
+```
+We see that $\Pi$ is in the range of value expected. BUT surprisingly GC* is significantly lower in the center which is in simulations the hotspots region but here is not beacause r=0 along all the sequences. But we assume it's due too variability, the number of runs being inferior to 100.  
